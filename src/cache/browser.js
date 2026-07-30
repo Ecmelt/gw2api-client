@@ -15,7 +15,7 @@ module.exports = function (configuration) {
   const persist = debounce(_persist, configuration.persistDebounce)
 
   function get (key) {
-    return Promise.resolve(_get(key))
+    return hydration.then(() => _get(key))
   }
 
   function set (key, value, expiry) {
@@ -24,8 +24,7 @@ module.exports = function (configuration) {
   }
 
   function mget (keys) {
-    let values = keys.map(key => _get(key))
-    return Promise.resolve(values)
+    return hydration.then(() => keys.map(key => _get(key)))
   }
 
   function mset (values) {
@@ -48,25 +47,38 @@ module.exports = function (configuration) {
   }
 
   function _persist () {
-    storageEngine.set(storageKey, _storage)
+    hydration
+      .then(() => storageEngine.set(storageKey, _storage))
       .catch(/* istanbul ignore next */ err => {
         console.warn('Failed persisting cache', err)
       })
   }
 
   function hydrate () {
-    storageEngine.get(storageKey)
+    return storageEngine.get(storageKey)
       .then(value => {
-        if (value) {
-          _storage = value
+        if (!value) {
+          return
         }
+
+        Object.keys(value).forEach(key => {
+          if (!(key in _storage)) {
+            _storage[key] = value[key]
+          }
+        })
+      })
+      .catch(/* istanbul ignore next */ err => {
+        console.warn('Failed hydrating cache', err)
       })
   }
 
   function flush () {
-    _storage = {}
-    storageEngine.delete(storageKey)
-    return Promise.resolve(true)
+    return hydration.then(() => {
+      _storage = {}
+      const deleteCallback = storageEngine.del || storageEngine.delete
+      deleteCallback(storageKey)
+      return true
+    })
   }
 
   function _getStorage () {
@@ -87,8 +99,8 @@ module.exports = function (configuration) {
   }
 
   setInterval(garbageCollection, configuration.gcTick)
-  hydrate()
-  garbageCollection()
+  const hydration = hydrate()
+  hydration.then(garbageCollection)
 
   return { get, set, mget, mset, flush, _getStorage }
 }

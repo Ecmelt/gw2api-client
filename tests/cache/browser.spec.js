@@ -100,4 +100,29 @@ describe('cache > browser', function () {
     expect(persistentStorage.herp.value).toEqual('derp')
     expect(typeof persistentStorage.herp.expiry).toEqual('number')
   })
+
+  it('does not lose entries written while hydrating', async () => {
+    await idbMock.set('gw2api-race-cache', {
+      persisted: { value: 'from-idb', expiry: new Date().getTime() + 5 * 60 * 1000 },
+      fresh: { value: 'stale', expiry: new Date().getTime() + 5 * 60 * 1000 }
+    })
+
+    const slowEngine = {
+      get: (key) => wait(100).then(() => idbMock.get(key)),
+      set: (key, value) => idbMock.set(key, value),
+      del: (key) => idbMock.delete(key)
+    }
+
+    const tmpCache = storage({
+      storageKey: 'gw2api-race-cache',
+      storageEngine: slowEngine,
+      gcTick: 50000,
+      persistDebounce: 100
+    })
+
+    await tmpCache.set('fresh', 'from-page', 60)
+
+    expect(await tmpCache.get('fresh')).toEqual('from-page')
+    expect(await tmpCache.get('persisted')).toEqual('from-idb')
+  })
 })
